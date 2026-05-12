@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
 import youtubedl from 'youtube-dl-exec';
 import path from 'path';
+import { Readable } from 'stream';
 
 async function startServer() {
   const app = express();
@@ -51,6 +52,48 @@ async function startServer() {
     } catch (e: any) {
       console.error('Loader progress error:', e);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Loader API Proxy - File Stream Streaming
+  app.get("/api/loader/download", async (req, res) => {
+    try {
+      const { url } = req.query;
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+      
+      const response = await fetch(url as string);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch from remote: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      let contentDisposition = response.headers.get('content-disposition');
+      const contentLength = response.headers.get('content-length');
+
+      // Force attachment so browsers download it instead of navigating to or playing the video
+      if (!contentDisposition || !contentDisposition.includes('attachment')) {
+        contentDisposition = `attachment; filename="video-${Date.now()}.mp4"`;
+      }
+
+      if (contentType) res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', contentDisposition);
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+
+      if (response.body) {
+        // dynamic import or require to stream it properly? 
+        // We can just use the Readable polyfill provided in server environments
+        const nodeStream = Readable.fromWeb(response.body as any);
+        nodeStream.pipe(res);
+      } else {
+        res.status(500).send('No body in response');
+      }
+    } catch (e: any) {
+      console.error('Loader download proxy error:', e);
+      if (!res.headersSent) {
+        res.status(500).json({ error: e.message });
+      }
     }
   });
 
